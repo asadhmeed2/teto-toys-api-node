@@ -1,36 +1,28 @@
 const express = require('express');
-const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const router = express.Router();
 
 // In-memory refresh token store (resets on restart; swap for Redis/DB in production)
 const refreshTokenStore = new Set();
 
-// JWT Utility
-function base64UrlEncode(str) {
-  return Buffer.from(str)
-    .toString('base64')
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
-}
-
-function generateJWT(payload, secret) {
-  const header = { alg: 'HS256', typ: 'JWT' };
-  const encodedHeader = base64UrlEncode(JSON.stringify(header));
-  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
-  const signingInput = `${encodedHeader}.${encodedPayload}`;
-  const signature = crypto
-    .createHmac('sha256', secret)
-    .update(signingInput)
-    .digest('base64')
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
-  return `${signingInput}.${signature}`;
-}
-
 function getSecret() {
   return process.env.JWT_SECRET || 'SuperSecretKeyForTetoToysTokenAuth2026';
+}
+
+function generateToken(email, expireTime, tokenType = 'access') {
+  const payload = {
+    sub: email,
+    email: email,
+    role: 'User',
+    ...(tokenType === 'refresh' && { token_type: 'refresh' }),
+  };
+
+  return jwt.sign(payload, getSecret(), {
+    expiresIn: expireTime,
+    issuer: 'tatotoys-api',
+    audience: 'tatotoys-frontend',
+    algorithm: 'HS256',
+  });
 }
 
 function setRefreshCookie(res, token) {
@@ -56,26 +48,10 @@ router.post('/login', (req, res) => {
   }
 
   if (email === 'admin@tetotoys.com' && password === 'password123') {
-    const secret = getSecret();
+    const accessToken = generateToken(email, '15m');
+    const refreshToken = generateToken(email, '7d', 'refresh');
 
-    // Short-lived access token (15 minutes)
-    const accessPayload = {
-      sub: email,
-      email: email,
-      exp: Math.floor(Date.now() / 1000) + 15 * 60,
-    };
-    const accessToken = generateJWT(accessPayload, secret);
-
-    // Long-lived refresh token (7 days)
-    const refreshPayload = {
-      sub: email,
-      email: email,
-      type: 'refresh',
-      exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
-    };
-    const refreshToken = generateJWT(refreshPayload, secret);
     refreshTokenStore.add(refreshToken);
-
     setRefreshCookie(res, refreshToken);
 
     return res.json({
@@ -96,39 +72,23 @@ router.post('/refresh', (req, res) => {
     return res.status(401).json({ error: 'invalid_token', error_description: 'Missing or invalid refresh token.' });
   }
 
-  // Rotate: invalidate old token and issue new ones
+  // Rotate: invalidate old token
   refreshTokenStore.delete(refreshToken);
 
-  const secret = getSecret();
-
-  // Decode email from old refresh token (simple base64 decode — not verified here for brevity)
+  // Decode email using jwt.decode() (payload only, no signature verification needed — token already validated via store)
   let email;
   try {
-    const payloadPart = refreshToken.split('.')[1];
-    const padding = (4 - (payloadPart.length % 4)) % 4;
-    const padded = payloadPart + '='.repeat(padding);
-    const decoded = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+    const decoded = jwt.decode(refreshToken);
+    if (!decoded?.email) throw new Error('Missing email claim');
     email = decoded.email;
   } catch {
     return res.status(401).json({ error: 'invalid_token', error_description: 'Malformed refresh token.' });
   }
 
-  const newAccessPayload = {
-    sub: email,
-    email: email,
-    exp: Math.floor(Date.now() / 1000) + 15 * 60,
-  };
-  const newAccessToken = generateJWT(newAccessPayload, secret);
+  const newAccessToken = generateToken(email, '15m');
+  const newRefreshToken = generateToken(email, '7d', 'refresh');
 
-  const newRefreshPayload = {
-    sub: email,
-    email: email,
-    type: 'refresh',
-    exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
-  };
-  const newRefreshToken = generateJWT(newRefreshPayload, secret);
   refreshTokenStore.add(newRefreshToken);
-
   setRefreshCookie(res, newRefreshToken);
 
   return res.json({
