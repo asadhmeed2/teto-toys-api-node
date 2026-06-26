@@ -1,9 +1,26 @@
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
+const Redis = require('ioredis');
 require('dotenv').config();
 
 const app = express();
+
+// Redis client — single global instance (ioredis handles connection pooling internally)
+const redis = new Redis({
+  host: process.env.REDIS_HOST || '127.0.0.1',
+  port: parseInt(process.env.REDIS_PORT || '6379'),
+  password: process.env.REDIS_PASSWORD || undefined,
+  connectTimeout: 5000,
+  commandTimeout: 3000,
+  lazyConnect: false,
+});
+
+redis.on('connect', () => console.log('Redis connected'));
+redis.on('error', (err) => console.error('Redis error:', err.message));
+
+// Export for use in route handlers
+module.exports.redis = redis;
 
 // Middleware
 app.use(cors({

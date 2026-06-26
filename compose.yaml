@@ -6,7 +6,16 @@ services:
       - .env
     environment:
       NODE_ENV: production
-      CORS_ORIGINS: http://localhost:4200
+      CORS_ORIGINS: ${CORS_ORIGIN}
+      REDIS_HOST: shared_redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     restart: unless-stopped
+    networks:
+      - infrastructure_network 
+
+networks:
+  infrastructure_network:
+    external: true

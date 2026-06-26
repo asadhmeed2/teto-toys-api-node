@@ -1,9 +1,9 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const { redis } = require('../server');
 const router = express.Router();
 
-// In-memory refresh token store (resets on restart; swap for Redis/DB in production)
-const refreshTokenStore = new Set();
+const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
 function getSecret() {
   return process.env.JWT_SECRET || 'SuperSecretKeyForTetoToysTokenAuth2026';
@@ -30,13 +30,13 @@ function setRefreshCookie(res, token) {
     httpOnly: true,
     sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in ms
+    maxAge: REFRESH_TOKEN_TTL * 1000, // ms
     path: '/',
   });
 }
 
 // POST /login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
@@ -51,7 +51,8 @@ router.post('/login', (req, res) => {
     const accessToken = generateToken(email, '15m');
     const refreshToken = generateToken(email, '7d', 'refresh');
 
-    refreshTokenStore.add(refreshToken);
+    // Store refresh token in Redis with 7-day TTL
+    await redis.set(`refresh:${refreshToken}`, '1', 'EX', REFRESH_TOKEN_TTL);
     setRefreshCookie(res, refreshToken);
 
     return res.json({
@@ -65,17 +66,22 @@ router.post('/login', (req, res) => {
 });
 
 // POST /refresh
-router.post('/refresh', (req, res) => {
+router.post('/refresh', async (req, res) => {
   const refreshToken = req.cookies?.refresh_token;
 
-  if (!refreshToken || !refreshTokenStore.has(refreshToken)) {
+  if (!refreshToken) {
+    return res.status(401).json({ error: 'invalid_token', error_description: 'Missing or invalid refresh token.' });
+  }
+
+  const exists = await redis.exists(`refresh:${refreshToken}`);
+  if (!exists) {
     return res.status(401).json({ error: 'invalid_token', error_description: 'Missing or invalid refresh token.' });
   }
 
   // Rotate: invalidate old token
-  refreshTokenStore.delete(refreshToken);
+  await redis.del(`refresh:${refreshToken}`);
 
-  // Decode email using jwt.decode() (payload only, no signature verification needed — token already validated via store)
+  // Decode email (token already validated via Redis store)
   let email;
   try {
     const decoded = jwt.decode(refreshToken);
@@ -88,7 +94,7 @@ router.post('/refresh', (req, res) => {
   const newAccessToken = generateToken(email, '15m');
   const newRefreshToken = generateToken(email, '7d', 'refresh');
 
-  refreshTokenStore.add(newRefreshToken);
+  await redis.set(`refresh:${newRefreshToken}`, '1', 'EX', REFRESH_TOKEN_TTL);
   setRefreshCookie(res, newRefreshToken);
 
   return res.json({
@@ -99,10 +105,10 @@ router.post('/refresh', (req, res) => {
 });
 
 // POST /logout
-router.post('/logout', (req, res) => {
+router.post('/logout', async (req, res) => {
   const refreshToken = req.cookies?.refresh_token;
   if (refreshToken) {
-    refreshTokenStore.delete(refreshToken);
+    await redis.del(`refresh:${refreshToken}`);
   }
   res.clearCookie('refresh_token', { path: '/' });
   res.json({ message: 'Logged out successfully' });
