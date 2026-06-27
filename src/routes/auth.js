@@ -114,4 +114,24 @@ router.post('/logout', async (req, res) => {
   res.json({ message: 'Logged out successfully' });
 });
 
+// GET /me — validate access token and return the current user's info
+router.get('/me', (req, res) => {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+    return res.status(401).json({ error: 'unauthorized', error_description: 'Missing or invalid Authorization header.' });
+  }
+
+  const token = authHeader.slice(7);
+  try {
+    const decoded = jwt.verify(token, getSecret(), {
+      issuer: 'tatotoys-api',
+      audience: 'tatotoys-frontend',
+      algorithms: ['HS256'],
+    });
+    return res.json({ email: decoded.email, role: decoded.role });
+  } catch {
+    return res.status(401).json({ error: 'unauthorized', error_description: 'Token is invalid or expired.' });
+  }
+});
+
 module.exports = router;
