@@ -1,8 +1,11 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
 const { redis } = require('../server');
 const router = express.Router();
 
+const BCRYPT_ROUNDS = 10;
 const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
 function getSecret() {
@@ -132,6 +135,63 @@ router.get('/me', (req, res) => {
   } catch {
     return res.status(401).json({ error: 'unauthorized', error_description: 'Token is invalid or expired.' });
   }
+});
+
+// POST /register
+router.post('/register', async (req, res) => {
+  const { first_name, last_name, email, password, confirm_password, is_adult, terms_accepted, marketing_opt_in } = req.body;
+
+  // --- Required field checks ---
+  if (!first_name || !last_name || !email || !password || !confirm_password) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'All fields are required.' });
+  }
+
+  // --- Email format validation ---
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'Please enter a valid email address.' });
+  }
+
+  // --- Password strength ---
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'Password must be at least 8 characters.' });
+  }
+
+  // --- Passwords match ---
+  if (password !== confirm_password) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'Passwords do not match.' });
+  }
+
+  // --- Compliance checks ---
+  if (!is_adult) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'You must confirm that you are 18 years or older.' });
+  }
+
+  if (!terms_accepted) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'You must accept the Terms of Service and Privacy Policy.' });
+  }
+
+  // --- Hash password ---
+  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+  // --- Stub response (no DB yet) ---
+  const userId = uuidv4();
+  const now = new Date().toISOString();
+
+  return res.status(201).json({
+    message: 'Account created successfully.',
+    user: {
+      user_id: userId,
+      email,
+      first_name,
+      last_name,
+      is_adult: true,
+      terms_accepted_at: now,
+      terms_version: '1.0',
+      marketing_opt_in: !!marketing_opt_in,
+      created_at: now,
+    },
+  });
 });
 
 module.exports = router;
