@@ -2,7 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-const { redis } = require('../server');
+const { redis, db } = require('../server');
 const router = express.Router();
 
 const BCRYPT_ROUNDS = 10;
@@ -50,9 +50,31 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'invalid_request', error_description: 'Password must be at least 8 characters.' });
   }
 
-  if (email === 'admin@tetotoys.com' && password === 'password123') {
-    const accessToken = generateToken(email, '15m');
-    const refreshToken = generateToken(email, '7d', 'refresh');
+  try {
+    // Look up user by email
+    const [rows] = await db.execute('SELECT user_id, email, password_hash, is_active FROM users WHERE email = ?', [email]);
+
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'invalid_grant', error_description: 'Invalid email or password.' });
+    }
+
+    const user = rows[0];
+
+    if (!user.is_active) {
+      return res.status(401).json({ error: 'invalid_grant', error_description: 'Account is deactivated.' });
+    }
+
+    // Verify password against stored hash
+    const passwordMatch = await bcrypt.compare(password, user.password_hash);
+    if (!passwordMatch) {
+      return res.status(401).json({ error: 'invalid_grant', error_description: 'Invalid email or password.' });
+    }
+
+    // Update last_login timestamp
+    await db.execute('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
+
+    const accessToken = generateToken(user.email, '15m');
+    const refreshToken = generateToken(user.email, '7d', 'refresh');
 
     // Store refresh token in Redis with 7-day TTL
     await redis.set(`refresh:${refreshToken}`, '1', 'EX', REFRESH_TOKEN_TTL);
@@ -63,9 +85,10 @@ router.post('/login', async (req, res) => {
       token_type: 'Bearer',
       expires_in: 900,
     });
+  } catch (err) {
+    console.error('Login DB error:', err.message);
+    return res.status(500).json({ error: 'server_error', error_description: 'An internal error occurred.' });
   }
-
-  return res.status(401).json({ error: 'invalid_grant', error_description: 'Invalid email or password.' });
 });
 
 // POST /refresh
@@ -174,9 +197,25 @@ router.post('/register', async (req, res) => {
   // --- Hash password ---
   const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
-  // --- Stub response (no DB yet) ---
+  // --- Persist to MySQL ---
   const userId = uuidv4();
-  const now = new Date().toISOString();
+  const now = new Date();
+  const termsVersion = '1.0';
+
+  try {
+    await db.execute(
+      `INSERT INTO users (user_id, email, password_hash, first_name, last_name, is_adult, terms_accepted_at, terms_version, marketing_opt_in, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userId, email, passwordHash, first_name, last_name, true, now, termsVersion, !!marketing_opt_in, now]
+    );
+  } catch (err) {
+    // MySQL duplicate-entry error code: ER_DUP_ENTRY
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'conflict', error_description: 'An account with this email already exists.' });
+    }
+    console.error('Register DB error:', err.message);
+    return res.status(500).json({ error: 'server_error', error_description: 'An internal error occurred.' });
+  }
 
   return res.status(201).json({
     message: 'Account created successfully.',
@@ -186,10 +225,10 @@ router.post('/register', async (req, res) => {
       first_name,
       last_name,
       is_adult: true,
-      terms_accepted_at: now,
-      terms_version: '1.0',
+      terms_accepted_at: now.toISOString(),
+      terms_version: termsVersion,
       marketing_opt_in: !!marketing_opt_in,
-      created_at: now,
+      created_at: now.toISOString(),
     },
   });
 });

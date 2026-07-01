@@ -21,6 +21,7 @@ redis.on('error', (err) => console.error('Redis error:', err.message));
 
 // Export for use in route handlers
 module.exports.redis = redis;
+module.exports.db = require('./services/db');
 
 // Middleware
 app.use(cors({
