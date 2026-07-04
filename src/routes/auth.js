@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { redis, db } = require('../server');
+const { sendPasswordResetEmail } = require('../services/email');
 const router = express.Router();
 
 const BCRYPT_ROUNDS = 10;
@@ -231,6 +232,72 @@ router.post('/register', async (req, res) => {
       created_at: now.toISOString(),
     },
   });
+});
+
+// POST /forgot-password
+router.post('/forgot-password', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'Email is required.' });
+  }
+
+  try {
+    const [rows] = await db.execute(
+      'SELECT user_id, email, is_active FROM users WHERE email = ?',
+      [email.trim()]
+    );
+
+    // Always return 200 to prevent user enumeration
+    if (rows.length > 0 && rows[0].is_active) {
+      const user = rows[0];
+      const token = uuidv4().replace(/-/g, '') + uuidv4().replace(/-/g, '');
+      const RESET_TTL = 15 * 60; // 15 minutes
+
+      await redis.set(`reset:${token}`, user.user_id, 'EX', RESET_TTL);
+
+      const frontendBaseUrl = process.env.FRONTEND_BASE_URL || 'http://localhost:4200';
+      const resetLink = `${frontendBaseUrl}/reset-password?token=${token}`;
+      await sendPasswordResetEmail(user.email, resetLink);
+    }
+
+    return res.json({ message: "If an account with that email exists, a password reset link has been sent." });
+  } catch (err) {
+    console.error('ForgotPassword error:', err.message);
+    return res.status(500).json({ error: 'server_error', error_description: 'An internal error occurred.' });
+  }
+});
+
+// POST /reset-password
+router.post('/reset-password', async (req, res) => {
+  const { token, new_password, confirm_password } = req.body;
+
+  if (!token) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'Token is required.' });
+  }
+  if (!new_password || new_password.length < 8) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'Password must be at least 8 characters.' });
+  }
+  if (new_password !== confirm_password) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'Passwords do not match.' });
+  }
+
+  try {
+    const userId = await redis.get(`reset:${token}`);
+    if (!userId) {
+      return res.status(400).json({ error: 'invalid_token', error_description: 'Reset token is invalid or has expired.' });
+    }
+
+    await redis.del(`reset:${token}`);
+
+    const passwordHash = await bcrypt.hash(new_password, BCRYPT_ROUNDS);
+    await db.execute('UPDATE users SET password_hash = ? WHERE user_id = ?', [passwordHash, userId]);
+
+    return res.json({ message: 'Password has been reset successfully.' });
+  } catch (err) {
+    console.error('ResetPassword error:', err.message);
+    return res.status(500).json({ error: 'server_error', error_description: 'An internal error occurred.' });
+  }
 });
 
 module.exports = router;
