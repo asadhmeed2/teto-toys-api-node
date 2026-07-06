@@ -13,10 +13,9 @@ function getSecret() {
   return process.env.JWT_SECRET || 'SuperSecretKeyForTetoToysTokenAuth2026';
 }
 
-function generateToken(email, expireTime, tokenType = 'access') {
+function generateToken(userId, expireTime, tokenType = 'access') {
   const payload = {
-    sub: email,
-    email: email,
+    sub: userId,
     role: 'User',
     ...(tokenType === 'refresh' && { token_type: 'refresh' }),
   };
@@ -74,8 +73,8 @@ router.post('/login', async (req, res) => {
     // Update last_login timestamp
     await db.execute('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
 
-    const accessToken = generateToken(user.email, '15m');
-    const refreshToken = generateToken(user.email, '7d', 'refresh');
+    const accessToken = generateToken(user.user_id, '15m');
+    const refreshToken = generateToken(user.user_id, '7d', 'refresh');
 
     // Store refresh token in Redis with 7-day TTL
     await redis.set(`refresh:${refreshToken}`, '1', 'EX', REFRESH_TOKEN_TTL);
@@ -108,18 +107,18 @@ router.post('/refresh', async (req, res) => {
   // Rotate: invalidate old token
   await redis.del(`refresh:${refreshToken}`);
 
-  // Decode email (token already validated via Redis store)
-  let email;
+  // Decode userId (token already validated via Redis store)
+  let userId;
   try {
     const decoded = jwt.decode(refreshToken);
-    if (!decoded?.email) throw new Error('Missing email claim');
-    email = decoded.email;
+    if (!decoded?.sub) throw new Error('Missing sub claim');
+    userId = decoded.sub;
   } catch {
     return res.status(401).json({ error: 'invalid_token', error_description: 'Malformed refresh token.' });
   }
 
-  const newAccessToken = generateToken(email, '15m');
-  const newRefreshToken = generateToken(email, '7d', 'refresh');
+  const newAccessToken = generateToken(userId, '15m');
+  const newRefreshToken = generateToken(userId, '7d', 'refresh');
 
   await redis.set(`refresh:${newRefreshToken}`, '1', 'EX', REFRESH_TOKEN_TTL);
   setRefreshCookie(res, newRefreshToken);
@@ -155,7 +154,7 @@ router.get('/me', (req, res) => {
       audience: 'tatotoys-frontend',
       algorithms: ['HS256'],
     });
-    return res.json({ email: decoded.email, role: decoded.role });
+    return res.json({ userId: decoded.sub, role: decoded.role });
   } catch {
     return res.status(401).json({ error: 'unauthorized', error_description: 'Token is invalid or expired.' });
   }
