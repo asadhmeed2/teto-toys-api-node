@@ -35,6 +35,9 @@ app.use(cookieParser());
 const authRouter = require('./routes/auth');
 app.use('/api/auth', authRouter);
 
+const productsRouter = require('./routes/products');
+app.use('/api', productsRouter);
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
