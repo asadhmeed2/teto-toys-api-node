@@ -101,6 +101,7 @@ router.get('/parts', async (req, res) => {
     console.error('Fetch parts error:', err.message);
     return res.status(500).json({ error: 'server_error', error_description: 'An internal error occurred.' });
   }
+});
 // ponytail: GET /categories (public storefront endpoint)
 router.get('/categories', async (req, res) => {
   try {
