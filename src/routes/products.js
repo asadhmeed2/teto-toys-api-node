@@ -7,16 +7,24 @@ router.get('/products', async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const pageSize = parseInt(req.query.pageSize) || 10;
   const search = req.query.search || '';
+  const category = req.query.category || 'All';
   const offset = (page - 1) * pageSize;
 
   try {
-    let countSql = 'SELECT COUNT(1) AS count FROM products';
-    let itemsSql = 'SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls FROM products';
+    let countSql = 'SELECT COUNT(1) AS count FROM products WHERE is_deleted = 0 AND is_displayed = 1';
+    let itemsSql = 'SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls FROM products WHERE is_deleted = 0 AND is_displayed = 1';
     let params = [];
 
+    const filterByCategory = category !== 'All' && !isNaN(parseInt(category));
+    if (filterByCategory) {
+      countSql += ' AND category = ?';
+      itemsSql += ' AND category = ?';
+      params.push(parseInt(category));
+    }
+
     if (search) {
-      countSql += ' WHERE title LIKE ? OR description LIKE ?';
-      itemsSql += ' WHERE title LIKE ? OR description LIKE ?';
+      countSql += ' AND (title LIKE ? OR description LIKE ?)';
+      itemsSql += ' AND (title LIKE ? OR description LIKE ?)';
       params.push(`%${search}%`, `%${search}%`);
     }
 
