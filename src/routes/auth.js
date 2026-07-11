@@ -13,11 +13,13 @@ function getSecret() {
   return process.env.JWT_SECRET || 'SuperSecretKeyForTetoToysTokenAuth2026';
 }
 
-function generateToken(userId, expireTime, tokenType = 'access') {
+function generateToken(userId, expireTime, tokenType = 'access', firstName, lastName) {
   const payload = {
     sub: userId,
     role: 'User',
     ...(tokenType === 'refresh' && { token_type: 'refresh' }),
+    ...(firstName && { firstName }),
+    ...(lastName && { lastName }),
   };
 
   return jwt.sign(payload, getSecret(), {
@@ -52,7 +54,7 @@ router.post('/login', async (req, res) => {
 
   try {
     // Look up user by email
-    const [rows] = await db.execute('SELECT user_id, email, password_hash, is_active FROM users WHERE email = ?', [email]);
+    const [rows] = await db.execute('SELECT user_id, email, password_hash, is_active, first_name, last_name FROM users WHERE email = ?', [email]);
 
     if (rows.length === 0) {
       return res.status(401).json({ error: 'invalid_grant', error_description: 'Invalid email or password.' });
@@ -74,7 +76,7 @@ router.post('/login', async (req, res) => {
     await db.execute('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
 
     const accessToken = generateToken(user.user_id, '15m');
-    const refreshToken = generateToken(user.user_id, '7d', 'refresh');
+    const refreshToken = generateToken(user.user_id, '7d', 'refresh', user.first_name, user.last_name);
 
     // Store refresh token in Redis with 7-day TTL
     await redis.set(`refresh:${refreshToken}`, '1', 'EX', REFRESH_TOKEN_TTL);
@@ -117,8 +119,14 @@ router.post('/refresh', async (req, res) => {
     return res.status(401).json({ error: 'invalid_token', error_description: 'Malformed refresh token.' });
   }
 
+  const [userRows] = await db.execute('SELECT user_id, is_active, first_name, last_name FROM users WHERE user_id = ?', [userId]);
+  if (userRows.length === 0 || !userRows[0].is_active) {
+    return res.status(401).json({ error: 'invalid_grant', error_description: 'Account is inactive or deleted.' });
+  }
+  const user = userRows[0];
+
   const newAccessToken = generateToken(userId, '15m');
-  const newRefreshToken = generateToken(userId, '7d', 'refresh');
+  const newRefreshToken = generateToken(userId, '7d', 'refresh', user.first_name, user.last_name);
 
   await redis.set(`refresh:${newRefreshToken}`, '1', 'EX', REFRESH_TOKEN_TTL);
   setRefreshCookie(res, newRefreshToken);
@@ -141,23 +149,45 @@ router.post('/logout', async (req, res) => {
 });
 
 // GET /me — validate access token and return the current user's info
-router.get('/me', (req, res) => {
+router.get('/me', async (req, res) => {
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
     return res.status(401).json({ error: 'unauthorized', error_description: 'Missing or invalid Authorization header.' });
   }
 
   const token = authHeader.slice(7);
+  let decoded;
   try {
-    const decoded = jwt.verify(token, getSecret(), {
+    decoded = jwt.verify(token, getSecret(), {
       issuer: 'tatotoys-api',
       audience: 'tatotoys-frontend',
       algorithms: ['HS256'],
     });
-    return res.json({ userId: decoded.sub, role: decoded.role });
   } catch {
     return res.status(401).json({ error: 'unauthorized', error_description: 'Token is invalid or expired.' });
   }
+
+  // The refresh token carries first/last name — pull it from there for the full profile
+  const refreshToken = req.cookies?.refresh_token;
+  if (refreshToken && await redis.exists(`refresh:${refreshToken}`)) {
+    try {
+      const refreshDecoded = jwt.verify(refreshToken, getSecret(), {
+        issuer: 'tatotoys-api',
+        audience: 'tatotoys-frontend',
+        algorithms: ['HS256'],
+      });
+      return res.json({
+        userId: refreshDecoded.sub,
+        role: refreshDecoded.role,
+        firstName: refreshDecoded.firstName || '',
+        lastName: refreshDecoded.lastName || '',
+      });
+    } catch {
+      // fall through to access-token-only info
+    }
+  }
+
+  return res.json({ userId: decoded.sub, role: decoded.role, firstName: '', lastName: '' });
 });
 
 // POST /register
