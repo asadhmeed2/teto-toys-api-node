@@ -113,7 +113,7 @@ router.get('/parts', async (req, res) => {
 // ponytail: GET /categories (public storefront endpoint)
 router.get('/categories', async (req, res) => {
   try {
-    const itemsSql = 'SELECT id, name, slug FROM categories ORDER BY name ASC';
+    const itemsSql = 'SELECT id, name, slug FROM categories WHERE number_of_active_products > 0 ORDER BY name ASC';
     const [rows] = await db.execute(itemsSql);
     return res.json(rows);
   } catch (err) {
