@@ -93,7 +93,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// POST /refresh
+// POST /refresh — issue a new access token from the existing refresh token
 router.post('/refresh', async (req, res) => {
   const refreshToken = req.cookies?.refresh_token;
 
@@ -106,30 +106,16 @@ router.post('/refresh', async (req, res) => {
     return res.status(401).json({ error: 'invalid_token', error_description: 'Missing or invalid refresh token.' });
   }
 
-  // Rotate: invalidate old token
-  await redis.del(`refresh:${refreshToken}`);
-
   // Decode userId (token already validated via Redis store)
-  let userId;
+  let decoded;
   try {
-    const decoded = jwt.decode(refreshToken);
+    decoded = jwt.decode(refreshToken);
     if (!decoded?.sub) throw new Error('Missing sub claim');
-    userId = decoded.sub;
   } catch {
     return res.status(401).json({ error: 'invalid_token', error_description: 'Malformed refresh token.' });
   }
 
-  const [userRows] = await db.execute('SELECT user_id, is_active, first_name, last_name FROM users WHERE user_id = ?', [userId]);
-  if (userRows.length === 0 || !userRows[0].is_active) {
-    return res.status(401).json({ error: 'invalid_grant', error_description: 'Account is inactive or deleted.' });
-  }
-  const user = userRows[0];
-
-  const newAccessToken = generateToken(userId, '15m');
-  const newRefreshToken = generateToken(userId, '7d', 'refresh', user.first_name, user.last_name);
-
-  await redis.set(`refresh:${newRefreshToken}`, '1', 'EX', REFRESH_TOKEN_TTL);
-  setRefreshCookie(res, newRefreshToken);
+  const newAccessToken = generateToken(decoded.sub, '15m');
 
   return res.json({
     access_token: newAccessToken,
