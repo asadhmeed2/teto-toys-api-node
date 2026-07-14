@@ -114,7 +114,7 @@ router.post('/favorites/:productId', async (req, res) => {
   }
 });
 
-// DELETE /favorites/:productId — remove product from favourites
+// DELETE /favorites/:productId — remove product from favorites
 router.delete('/favorites/:productId', async (req, res) => {
   const userId = extractUserId(req, res);
   if (!userId) return;
