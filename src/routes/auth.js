@@ -13,13 +13,14 @@ function getSecret() {
   return process.env.JWT_SECRET || 'SuperSecretKeyForTetoToysTokenAuth2026';
 }
 
-function generateToken(userId, expireTime, tokenType = 'access', firstName, lastName) {
+function generateToken(userId, expireTime, tokenType = 'access', firstName, lastName, timezone) {
   const payload = {
     sub: userId,
     role: 'User',
     ...(tokenType === 'refresh' && { token_type: 'refresh' }),
     ...(firstName && { firstName }),
     ...(lastName && { lastName }),
+    ...(tokenType === 'refresh' && timezone && { timezone }),
   };
 
   return jwt.sign(payload, getSecret(), {
@@ -42,7 +43,7 @@ function setRefreshCookie(res, token) {
 
 // POST /login
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, timezone } = req.body;
 
   if (!email || !password) {
     return res.status(400).json({ error: 'invalid_request', error_description: 'Email and password are required.' });
@@ -76,7 +77,7 @@ router.post('/login', async (req, res) => {
     await db.execute('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
 
     const accessToken = generateToken(user.user_id, '15m');
-    const refreshToken = generateToken(user.user_id, '7d', 'refresh', user.first_name, user.last_name);
+    const refreshToken = generateToken(user.user_id, '7d', 'refresh', user.first_name, user.last_name, timezone);
 
     // Store refresh token in Redis with 7-day TTL
     await redis.set(`refresh:${refreshToken}`, '1', 'EX', REFRESH_TOKEN_TTL);
