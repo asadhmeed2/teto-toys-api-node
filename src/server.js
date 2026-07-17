@@ -41,6 +41,9 @@ app.use('/api', productsRouter);
 const favoritesRouter = require('./routes/favorites');
 app.use('/api', favoritesRouter);
 
+const contactRouter = require('./routes/contact');
+app.use('/api', contactRouter);
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
