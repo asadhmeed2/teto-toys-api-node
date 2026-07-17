@@ -2,6 +2,16 @@ const express = require('express');
 const { db } = require('../server');
 const router = express.Router();
 
+// ponytail: HTML-encode free-text fields so a submitted <script> tag is stored
+// as inert text, protecting any future consumer (admin UI, email digest, etc.)
+// that renders these values, regardless of whether that consumer remembers to encode.
+const escapeHtml = (str) =>
+  str.replace(/&/g, '&amp;')
+     .replace(/</g, '&lt;')
+     .replace(/>/g, '&gt;')
+     .replace(/"/g, '&quot;')
+     .replace(/'/g, '&#39;');
+
 // POST /contact — save a contact form submission (public, no auth required)
 router.post('/contact', async (req, res) => {
   const { name, email, subject, message } = req.body;
@@ -16,7 +26,12 @@ router.post('/contact', async (req, res) => {
   try {
     await db.execute(
       'INSERT INTO contact_messages (name, email, subject, message) VALUES (?, ?, ?, ?)',
-      [name.trim(), email.trim(), (subject || '').trim() || null, message.trim()]
+      [
+        escapeHtml(name.trim()),
+        escapeHtml(email.trim()),
+        (subject || '').trim() ? escapeHtml(subject.trim()) : null,
+        escapeHtml(message.trim()),
+      ]
     );
 
     return res.status(201).json({
