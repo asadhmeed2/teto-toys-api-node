@@ -8,27 +8,42 @@ router.get('/products', async (req, res) => {
   const pageSize = parseInt(req.query.pageSize) || 10;
   const search = req.query.search || '';
   const category = req.query.category || 'All';
+  const lang = req.query.lang || 'en';
   const offset = (page - 1) * pageSize;
 
   try {
-    let countSql = 'SELECT COUNT(1) AS count FROM products WHERE is_deleted = 0 AND is_displayed = 1';
-    let itemsSql = 'SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls FROM products WHERE is_deleted = 0 AND is_displayed = 1';
-    let params = [];
+    // Double LEFT JOIN product_translations resolves requested-language text with
+    // an 'en' fallback; the count query needs the same joins since the search
+    // filter matches translated text.
+    let countSql = `SELECT COUNT(1) AS count FROM products p
+      LEFT JOIN product_translations req ON req.product_id = p.product_id AND req.language_code = ?
+      LEFT JOIN product_translations fb ON fb.product_id = p.product_id AND fb.language_code = 'en'
+      WHERE p.is_deleted = 0 AND p.is_displayed = 1`;
+    let itemsSql = `SELECT p.product_id,
+        COALESCE(req.title, fb.title) AS title,
+        COALESCE(req.subtitle, fb.subtitle) AS subtitle,
+        COALESCE(req.description, fb.description) AS description,
+        p.category, p.subcategory, p.price, p.image_urls
+      FROM products p
+      LEFT JOIN product_translations req ON req.product_id = p.product_id AND req.language_code = ?
+      LEFT JOIN product_translations fb ON fb.product_id = p.product_id AND fb.language_code = 'en'
+      WHERE p.is_deleted = 0 AND p.is_displayed = 1`;
+    let params = [lang];
 
     const filterByCategory = category !== 'All' && !isNaN(parseInt(category));
     if (filterByCategory) {
-      countSql += ' AND category = ?';
-      itemsSql += ' AND category = ?';
+      countSql += ' AND p.category = ?';
+      itemsSql += ' AND p.category = ?';
       params.push(parseInt(category));
     }
 
     if (search) {
-      countSql += ' AND (title LIKE ? OR description LIKE ?)';
-      itemsSql += ' AND (title LIKE ? OR description LIKE ?)';
+      countSql += ' AND (COALESCE(req.title, fb.title) LIKE ? OR COALESCE(req.description, fb.description) LIKE ?)';
+      itemsSql += ' AND (COALESCE(req.title, fb.title) LIKE ? OR COALESCE(req.description, fb.description) LIKE ?)';
       params.push(`%${search}%`, `%${search}%`);
     }
 
-    itemsSql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    itemsSql += ' ORDER BY p.created_at DESC LIMIT ? OFFSET ?';
     const itemsParams = [...params, pageSize, offset];
 
     const [countRows] = await db.execute(countSql, params);
@@ -67,20 +82,30 @@ router.get('/parts', async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const pageSize = parseInt(req.query.pageSize) || 10;
   const search = req.query.search || '';
+  const lang = req.query.lang || 'en';
   const offset = (page - 1) * pageSize;
 
   try {
-    let countSql = 'SELECT COUNT(1) AS count FROM parts';
-    let itemsSql = 'SELECT part_id, title, description, price, image_urls FROM parts';
-    let params = [];
+    let countSql = `SELECT COUNT(1) AS count FROM parts pa
+      LEFT JOIN part_translations req ON req.part_id = pa.part_id AND req.language_code = ?
+      LEFT JOIN part_translations fb ON fb.part_id = pa.part_id AND fb.language_code = 'en'`;
+    let itemsSql = `SELECT pa.part_id,
+        COALESCE(req.title, fb.title) AS title,
+        COALESCE(req.description, fb.description) AS description,
+        pa.price, pa.image_urls
+      FROM parts pa
+      LEFT JOIN part_translations req ON req.part_id = pa.part_id AND req.language_code = ?
+      LEFT JOIN part_translations fb ON fb.part_id = pa.part_id AND fb.language_code = 'en'`;
+    let params = [lang];
 
     if (search) {
-      countSql += ' WHERE title LIKE ? OR description LIKE ?';
-      itemsSql += ' WHERE title LIKE ? OR description LIKE ?';
+      const searchClause = ' WHERE (COALESCE(req.title, fb.title) LIKE ? OR COALESCE(req.description, fb.description) LIKE ?)';
+      countSql += searchClause;
+      itemsSql += searchClause;
       params.push(`%${search}%`, `%${search}%`);
     }
 
-    itemsSql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    itemsSql += ' ORDER BY pa.created_at DESC LIMIT ? OFFSET ?';
     const itemsParams = [...params, pageSize, offset];
 
     const [countRows] = await db.execute(countSql, params);
@@ -112,9 +137,15 @@ router.get('/parts', async (req, res) => {
 });
 // ponytail: GET /categories (public storefront endpoint)
 router.get('/categories', async (req, res) => {
+  const lang = req.query.lang || 'en';
   try {
-    const itemsSql = 'SELECT id, name, slug FROM categories WHERE number_of_active_products > 0 ORDER BY name ASC';
-    const [rows] = await db.execute(itemsSql);
+    const itemsSql = `SELECT c.id, COALESCE(req.name, fb.name) AS name, c.slug
+      FROM categories c
+      LEFT JOIN category_translations req ON req.category_id = c.id AND req.language_code = ?
+      LEFT JOIN category_translations fb ON fb.category_id = c.id AND fb.language_code = 'en'
+      WHERE c.number_of_active_products > 0
+      ORDER BY name ASC`;
+    const [rows] = await db.execute(itemsSql, [lang]);
     return res.json(rows);
   } catch (err) {
     console.error('Fetch categories error:', err.message);
