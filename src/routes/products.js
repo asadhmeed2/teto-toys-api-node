@@ -153,4 +153,15 @@ router.get('/categories', async (req, res) => {
   }
 });
 
+// ponytail: GET /languages (public lookup for the storefront language selector)
+router.get('/languages', async (req, res) => {
+  try {
+    const [rows] = await db.execute('SELECT code, name, is_rtl FROM system_languages ORDER BY code ASC');
+    return res.json(rows.map(r => ({ code: r.code, name: r.name, is_rtl: !!r.is_rtl })));
+  } catch (err) {
+    console.error('Fetch languages error:', err.message);
+    return res.status(500).json({ error: 'server_error', error_description: 'An internal error occurred.' });
+  }
+});
+
 module.exports = router;
