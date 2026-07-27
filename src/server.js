@@ -44,6 +44,9 @@ app.use('/api', favoritesRouter);
 const contactRouter = require('./routes/contact');
 app.use('/api', contactRouter);
 
+const storeHoursRouter = require('./routes/store-hours');
+app.use('/api', storeHoursRouter);
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
