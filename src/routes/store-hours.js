@@ -30,13 +30,32 @@ function formatTime(value) {
 
 // Current weekday (0 = Sunday) and minutes-since-midnight in the store's timezone.
 function nowInStoreTimezone() {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: STORE_TIMEZONE,
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
+  let formatter;
+  try {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: STORE_TIMEZONE,
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  } catch (err) {
+    // Loud on purpose. Silently using server local time produces a WRONG
+    // open/closed answer whenever the host isn't in the store's zone — e.g. a
+    // UTC container reports "open" for hours after closing.
+    console.error(
+      `[store-hours] Timezone '${STORE_TIMEZONE}' could not be resolved (${err.message}). ` +
+        'Falling back to server local time — open/closed WILL be wrong unless the host ' +
+        'runs in that zone.',
+    );
+    const local = new Date();
+    return {
+      dayOfWeek: local.getDay(),
+      minutes: local.getHours() * 60 + local.getMinutes(),
+      label: `${String(local.getHours()).padStart(2, '0')}:${String(local.getMinutes()).padStart(2, '0')}`,
+      resolved: false,
+    };
+  }
 
   const parts = formatter.formatToParts(new Date());
   const lookup = {};
@@ -50,6 +69,7 @@ function nowInStoreTimezone() {
     dayOfWeek: dayIndex[lookup.weekday] ?? new Date().getDay(),
     minutes: hour * 60 + parseInt(lookup.minute, 10),
     label: `${String(hour).padStart(2, '0')}:${lookup.minute}`,
+    resolved: true,
   };
 }
 
@@ -106,6 +126,9 @@ router.get('/store-hours', async (req, res) => {
 
     return res.json({
       timezone: STORE_TIMEZONE,
+      // false => the host lacks IANA tz data and the times below are server-local,
+      // not store-local. Surfaced so it's visible without reading logs.
+      timezone_resolved: now.resolved !== false,
       server_time: now.label,
       is_open_now: isOpen,
       days,
