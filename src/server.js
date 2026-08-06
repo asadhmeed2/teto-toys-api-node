@@ -31,6 +31,12 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 
+// Rate limiting, before the routes so rejected traffic never reaches a handler.
+// Mounted after cors() so 429 responses still carry CORS headers and the browser
+// can read them instead of reporting an opaque network error.
+const { createRateLimiter } = require('./middleware/rate-limit');
+app.use(createRateLimiter(redis));
+
 // Routes
 const authRouter = require('./routes/auth');
 app.use('/api/auth', authRouter);
