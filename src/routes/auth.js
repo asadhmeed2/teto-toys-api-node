@@ -10,7 +10,7 @@ const BCRYPT_ROUNDS = 10;
 const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
 function getSecret() {
-  return process.env.JWT_SECRET || 'SuperSecretKeyForTetoToysTokenAuth2026';
+  return process.env.JWT_SECRET ;
 }
 
 function generateToken(userId, expireTime, tokenType = 'access', firstName, lastName, timezone) {

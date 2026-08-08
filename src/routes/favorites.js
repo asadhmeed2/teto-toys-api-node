@@ -4,7 +4,7 @@ const { db } = require('../server');
 const router = express.Router();
 
 function getSecret() {
-  return process.env.JWT_SECRET || 'SuperSecretKeyForTetoToysTokenAuth2026';
+  return process.env.JWT_SECRET ;
 }
 
 /** Validate Bearer token and return the userId, or null on failure. */
