@@ -24,6 +24,11 @@ module.exports.redis = redis;
 module.exports.db = require('./services/db');
 
 // Middleware
+// First so even short-circuited responses (429s, errors) carry the headers.
+const { securityHeaders } = require('./middleware/security-headers');
+app.disable('x-powered-by');
+app.use(securityHeaders);
+
 app.use(cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:4200',
   credentials: true,

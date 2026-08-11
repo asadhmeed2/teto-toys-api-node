@@ -4,6 +4,11 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { redis, db } = require('../server');
 const { sendPasswordResetEmail } = require('../services/email');
+const {
+  getLockoutRemaining,
+  recordFailure,
+  resetAttempts,
+} = require('../middleware/login-attempts');
 const router = express.Router();
 
 const BCRYPT_ROUNDS = 10;
@@ -54,24 +59,42 @@ router.post('/login', async (req, res) => {
   }
 
   try {
+    // Per-account throttle: caps guesses against one email regardless of how many
+    // IPs are used, which the per-IP rate limiter cannot do.
+    const lockoutRemaining = await getLockoutRemaining(redis, email);
+    if (lockoutRemaining > 0) {
+      res.set('Retry-After', String(lockoutRemaining));
+      return res.status(429).json({
+        error: 'too_many_attempts',
+        error_description: `Too many failed login attempts. Please try again in ${lockoutRemaining} seconds.`,
+      });
+    }
+
     // Look up user by email
     const [rows] = await db.execute('SELECT user_id, email, password_hash, is_active, first_name, last_name FROM users WHERE email = ?', [email]);
 
+    // Count unknown accounts too. Skipping them would make a wrong email fail
+    // differently from a wrong password, which is an enumeration oracle.
     if (rows.length === 0) {
+      await recordFailure(redis, email);
       return res.status(401).json({ error: 'invalid_grant', error_description: 'Invalid email or password.' });
     }
 
     const user = rows[0];
 
     if (!user.is_active) {
+      await recordFailure(redis, email);
       return res.status(401).json({ error: 'invalid_grant', error_description: 'Account is deactivated.' });
     }
 
     // Verify password against stored hash
     const passwordMatch = await bcrypt.compare(password, user.password_hash);
     if (!passwordMatch) {
+      await recordFailure(redis, email);
       return res.status(401).json({ error: 'invalid_grant', error_description: 'Invalid email or password.' });
     }
+
+    await resetAttempts(redis, email);
 
     // Update last_login timestamp
     await db.execute('UPDATE users SET last_login = NOW() WHERE user_id = ?', [user.user_id]);
