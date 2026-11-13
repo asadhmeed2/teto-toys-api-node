@@ -21,6 +21,8 @@ function extractUserId(req, res) {
       audience: 'tatotoys-frontend',
       algorithms: ['HS256'],
     });
+    // Refresh tokens share the signing key but must never pass as a Bearer access token.
+    if (decoded.token_type === 'refresh') throw new Error('refresh token used as access token');
     return decoded.sub;
   } catch {
     res.status(401).json({ error: 'unauthorized', error_description: 'Token is invalid or expired.' });

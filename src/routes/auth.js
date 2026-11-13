@@ -104,6 +104,9 @@ router.post('/login', async (req, res) => {
 
     // Store refresh token in Redis with 7-day TTL
     await redis.set(`refresh:${refreshToken}`, '1', 'EX', REFRESH_TOKEN_TTL);
+    // Per-user index so a password reset can revoke every session. Key shared with C#/flask.
+    await redis.sadd(`user_refresh:${user.user_id}`, refreshToken);
+    await redis.expire(`user_refresh:${user.user_id}`, REFRESH_TOKEN_TTL);
     setRefreshCookie(res, refreshToken);
 
     return res.json({
@@ -173,6 +176,7 @@ router.get('/me', async (req, res) => {
       audience: 'tatotoys-frontend',
       algorithms: ['HS256'],
     });
+    if (decoded.token_type === 'refresh') throw new Error('refresh token used as access token');
   } catch {
     return res.status(401).json({ error: 'unauthorized', error_description: 'Token is invalid or expired.' });
   }
@@ -331,6 +335,10 @@ router.post('/reset-password', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(new_password, BCRYPT_ROUNDS);
     await db.execute('UPDATE users SET password_hash = ? WHERE user_id = ?', [passwordHash, userId]);
+
+    // Log out every existing session — an attacker's stolen session must not survive the reset.
+    const sessions = await redis.smembers(`user_refresh:${userId}`);
+    await redis.del(`user_refresh:${userId}`, ...sessions.map(t => `refresh:${t}`));
 
     return res.json({ message: 'Password has been reset successfully.' });
   } catch (err) {
