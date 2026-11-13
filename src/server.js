@@ -58,6 +58,20 @@ app.use('/api', contactRouter);
 const storeHoursRouter = require('./routes/store-hours');
 app.use('/api', storeHoursRouter);
 
+// Central error handling: every error is JSON in the API's {error, error_description}
+// shape — never Express's default HTML page (which includes a stack trace outside production).
+app.use((req, res) => {
+  res.status(404).json({ error: 'not_found', error_description: 'Resource not found.' });
+});
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) console.error('Unhandled error:', err);
+  res.status(status).json(status >= 500
+    ? { error: 'server_error', error_description: 'An internal error occurred.' }
+    : { error: 'invalid_request', error_description: err.expose ? err.message : 'Bad request.' });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

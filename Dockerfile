@@ -6,7 +6,8 @@
 
 # Want to help us make this template better? Share your feedback here: https://forms.gle/ybq9Krt8jtBL3iCk7
 
-ARG NODE_VERSION=20.20.2
+# Node 20 reached end-of-life 2026-04-30; 22 is the active LTS.
+ARG NODE_VERSION=22
 
 FROM node:${NODE_VERSION}-alpine
 
@@ -34,13 +35,12 @@ RUN chown -R node:node /app
 # Run the application as a non-root user.
 USER node
 
-RUN npm install
-
 # Copy the rest of the source files into the image.
 COPY . .
 
 # Expose the port that the application listens on.
-EXPOSE 3030
+EXPOSE 3000
 
 # Run the application.
-CMD ["npm", "start"]
+# node as PID 1 (not npm) so SIGTERM reaches the app on docker stop.
+CMD ["node", "src/server.js"]

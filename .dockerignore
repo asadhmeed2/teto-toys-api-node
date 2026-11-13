@@ -32,3 +32,5 @@ node_modules
 **/dist
 LICENSE
 README.md
+
+**/.codegraph

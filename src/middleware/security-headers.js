@@ -25,6 +25,13 @@ function securityHeaders(req, res, next) {
 
   res.set('X-Permitted-Cross-Domain-Policies', 'none');
 
+  // JSON never needs to load anything or be framed; also neuters any HTML error page.
+  res.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  res.set('Cross-Origin-Resource-Policy', 'same-site');
+
+  // Responses carry tokens and per-user data; no browser or proxy may cache them.
+  res.set('Cache-Control', 'no-store');
+
   // HSTS tells browsers to refuse plain HTTP for this host. Production only —
   // on localhost it would pin the dev machine to HTTPS and break local work.
   if (process.env.NODE_ENV === 'production') {
