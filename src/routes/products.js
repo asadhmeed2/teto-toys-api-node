@@ -4,8 +4,10 @@ const router = express.Router();
 
 // ponytail: GET /products (public storefront endpoint)
 router.get('/products', async (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const pageSize = parseInt(req.query.pageSize) || 10;
+  // Clamp like the C#/flask APIs: a negative size crashes LIMIT, a huge one dumps the table.
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const ps = parseInt(req.query.pageSize);
+  const pageSize = ps >= 1 && ps <= 100 ? ps : 10;
   const search = req.query.search || '';
   const category = req.query.category || 'All';
   const lang = req.query.lang || 'en';
@@ -79,8 +81,10 @@ router.get('/products', async (req, res) => {
 
 // ponytail: GET /parts (public storefront endpoint)
 router.get('/parts', async (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const pageSize = parseInt(req.query.pageSize) || 10;
+  // Clamp like the C#/flask APIs: a negative size crashes LIMIT, a huge one dumps the table.
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const ps = parseInt(req.query.pageSize);
+  const pageSize = ps >= 1 && ps <= 100 ? ps : 10;
   const search = req.query.search || '';
   const lang = req.query.lang || 'en';
   const offset = (page - 1) * pageSize;

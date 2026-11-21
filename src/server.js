@@ -34,6 +34,16 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+// Request bodies here are flat: an object/array where a string belongs is the
+// operator/object-injection vector (mysql2, Redis keys), so reject it at the door.
+// ponytail: top-level only; give a route a schema if it ever needs nested JSON.
+app.use((req, res, next) => {
+  const b = req.body;
+  if (Array.isArray(b) || b && typeof b === 'object' && Object.values(b).some(v => v !== null && typeof v === 'object')) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'Body fields must be plain values.' });
+  }
+  next();
+});
 app.use(cookieParser());
 
 // Rate limiting, before the routes so rejected traffic never reaches a handler.
