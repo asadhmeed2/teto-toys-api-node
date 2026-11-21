@@ -1,6 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { redis, db } = require('../server');
 const { sendPasswordResetEmail } = require('../services/email');
@@ -11,7 +12,9 @@ const {
 } = require('../middleware/login-attempts');
 const router = express.Router();
 
-const BCRYPT_ROUNDS = 10;
+const BCRYPT_ROUNDS = 12;
+// Tokens are credentials: Redis stores only their SHA-256 (same hex as C#/flask, which share these keys).
+const h = t => crypto.createHash('sha256').update(t).digest('hex');
 const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
 function getSecret() {
@@ -103,9 +106,9 @@ router.post('/login', async (req, res) => {
     const refreshToken = generateToken(user.user_id, '7d', 'refresh', user.first_name, user.last_name, timezone);
 
     // Store refresh token in Redis with 7-day TTL
-    await redis.set(`refresh:${refreshToken}`, '1', 'EX', REFRESH_TOKEN_TTL);
+    await redis.set(`refresh:${h(refreshToken)}`, '1', 'EX', REFRESH_TOKEN_TTL);
     // Per-user index so a password reset can revoke every session. Key shared with C#/flask.
-    await redis.sadd(`user_refresh:${user.user_id}`, refreshToken);
+    await redis.sadd(`user_refresh:${user.user_id}`, h(refreshToken));
     await redis.expire(`user_refresh:${user.user_id}`, REFRESH_TOKEN_TTL);
     setRefreshCookie(res, refreshToken);
 
@@ -128,7 +131,7 @@ router.post('/refresh', async (req, res) => {
     return res.status(401).json({ error: 'invalid_token', error_description: 'Missing or invalid refresh token.' });
   }
 
-  const exists = await redis.exists(`refresh:${refreshToken}`);
+  const exists = await redis.exists(`refresh:${h(refreshToken)}`);
   if (!exists) {
     return res.status(401).json({ error: 'invalid_token', error_description: 'Missing or invalid refresh token.' });
   }
@@ -155,7 +158,7 @@ router.post('/refresh', async (req, res) => {
 router.post('/logout', async (req, res) => {
   const refreshToken = req.cookies?.refresh_token;
   if (refreshToken) {
-    await redis.del(`refresh:${refreshToken}`);
+    await redis.del(`refresh:${h(refreshToken)}`);
   }
   res.clearCookie('refresh_token', { path: '/' });
   res.json({ message: 'Logged out successfully' });
@@ -183,7 +186,7 @@ router.get('/me', async (req, res) => {
 
   // The refresh token carries first/last name — pull it from there for the full profile
   const refreshToken = req.cookies?.refresh_token;
-  if (refreshToken && await redis.exists(`refresh:${refreshToken}`)) {
+  if (refreshToken && await redis.exists(`refresh:${h(refreshToken)}`)) {
     try {
       const refreshDecoded = jwt.verify(refreshToken, getSecret(), {
         issuer: 'tatotoys-api',
@@ -222,6 +225,10 @@ router.post('/register', async (req, res) => {
   // --- Password strength ---
   if (password.length < 8) {
     return res.status(400).json({ error: 'invalid_request', error_description: 'Password must be at least 8 characters.' });
+  }
+  // bcrypt ignores bytes past 72; reject instead of silently truncating.
+  if (Buffer.byteLength(password) > 72) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'Password must be at most 72 bytes.' });
   }
 
   // --- Passwords match ---
@@ -294,10 +301,10 @@ router.post('/forgot-password', async (req, res) => {
     // Always return 200 to prevent user enumeration
     if (rows.length > 0 && rows[0].is_active) {
       const user = rows[0];
-      const token = uuidv4().replace(/-/g, '') + uuidv4().replace(/-/g, '');
+      const token = crypto.randomBytes(32).toString('hex');
       const RESET_TTL = 15 * 60; // 15 minutes
 
-      await redis.set(`reset:${token}`, user.user_id, 'EX', RESET_TTL);
+      await redis.set(`reset:${h(token)}`, user.user_id, 'EX', RESET_TTL);
 
       const frontendBaseUrl = process.env.FRONTEND_BASE_URL || 'http://localhost:4200';
       const resetLink = `${frontendBaseUrl}/reset-password?token=${token}`;
@@ -321,17 +328,21 @@ router.post('/reset-password', async (req, res) => {
   if (!new_password || new_password.length < 8) {
     return res.status(400).json({ error: 'invalid_request', error_description: 'Password must be at least 8 characters.' });
   }
+  // bcrypt ignores bytes past 72; reject instead of silently truncating.
+  if (Buffer.byteLength(new_password) > 72) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'Password must be at most 72 bytes.' });
+  }
   if (new_password !== confirm_password) {
     return res.status(400).json({ error: 'invalid_request', error_description: 'Passwords do not match.' });
   }
 
   try {
-    const userId = await redis.get(`reset:${token}`);
+    const userId = await redis.get(`reset:${h(token)}`);
     if (!userId) {
       return res.status(400).json({ error: 'invalid_token', error_description: 'Reset token is invalid or has expired.' });
     }
 
-    await redis.del(`reset:${token}`);
+    await redis.del(`reset:${h(token)}`);
 
     const passwordHash = await bcrypt.hash(new_password, BCRYPT_ROUNDS);
     await db.execute('UPDATE users SET password_hash = ? WHERE user_id = ?', [passwordHash, userId]);
