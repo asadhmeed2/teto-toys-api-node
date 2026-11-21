@@ -87,7 +87,7 @@ router.post('/login', async (req, res) => {
 
     if (!user.is_active) {
       await recordFailure(redis, email);
-      return res.status(401).json({ error: 'invalid_grant', error_description: 'Account is deactivated.' });
+      return res.status(401).json({ error: 'invalid_grant', error_description: 'Invalid email or password.' });
     }
 
     // Verify password against stored hash
@@ -299,7 +299,10 @@ router.post('/forgot-password', async (req, res) => {
     );
 
     // Always return 200 to prevent user enumeration
-    if (rows.length > 0 && rows[0].is_active) {
+    // One reset email per account per 5 min (key shared with C#/flask): the per-IP limiter
+    // can't stop a botnet flooding one inbox.
+    if (rows.length > 0 && rows[0].is_active
+        && await redis.set(`reset_cooldown:${rows[0].user_id}`, '1', 'EX', 300, 'NX')) {
       const user = rows[0];
       const token = crypto.randomBytes(32).toString('hex');
       const RESET_TTL = 15 * 60; // 15 minutes
@@ -308,7 +311,9 @@ router.post('/forgot-password', async (req, res) => {
 
       const frontendBaseUrl = process.env.FRONTEND_BASE_URL || 'http://localhost:4200';
       const resetLink = `${frontendBaseUrl}/reset-password?token=${token}`;
-      await sendPasswordResetEmail(user.email, resetLink);
+      // Log, don't fail: a send failure (bounce, quota, outage) must still return the generic 200, or 500-vs-200 tells an attacker which emails have accounts.
+      await sendPasswordResetEmail(user.email, resetLink)
+        .catch(err => console.error('ForgotPassword email send failed:', err.message));
     }
 
     return res.json({ message: "If an account with that email exists, a password reset link has been sent." });

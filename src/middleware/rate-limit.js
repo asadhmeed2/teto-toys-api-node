@@ -28,7 +28,7 @@ const AUTH_LIMIT = parseInt(process.env.RATE_LIMIT_AUTH || '10', 10);
 const AUTH_WINDOW = parseInt(process.env.RATE_LIMIT_AUTH_WINDOW || '60', 10);
 const AUTH_BURST = parseInt(process.env.RATE_LIMIT_AUTH_BURST || String(AUTH_LIMIT), 10);
 
-const STRICT_PREFIXES = (process.env.RATE_LIMIT_STRICT_PREFIXES || '/api/auth')
+const STRICT_PREFIXES = (process.env.RATE_LIMIT_STRICT_PREFIXES || '/api/auth,/api/contact')
   .split(',')
   .map((p) => p.trim())
   .filter(Boolean);

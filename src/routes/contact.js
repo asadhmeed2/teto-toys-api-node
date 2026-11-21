@@ -23,15 +23,21 @@ router.post('/contact', async (req, res) => {
     });
   }
 
+  const row = [
+    escapeHtml(name.trim()),
+    escapeHtml(email.trim()),
+    (subject || '').trim() ? escapeHtml(subject.trim()) : null,
+    escapeHtml(message.trim()),
+  ];
+  // Bounds match the columns (checked after encoding, which grows the text).
+  if (row[0].length > 120 || row[1].length > 255 || (row[2] || '').length > 255 || row[3].length > 5000) {
+    return res.status(400).json({ error: 'validation_error', error_description: 'name up to 120, email and subject up to 255, message up to 5000 characters.' });
+  }
+
   try {
     await db.execute(
       'INSERT INTO contact_messages (name, email, subject, message) VALUES (?, ?, ?, ?)',
-      [
-        escapeHtml(name.trim()),
-        escapeHtml(email.trim()),
-        (subject || '').trim() ? escapeHtml(subject.trim()) : null,
-        escapeHtml(message.trim()),
-      ]
+      row
     );
 
     return res.status(201).json({
